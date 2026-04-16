@@ -2,6 +2,10 @@ from django.urls import path
 from api import views
 
 urlpatterns = [
+    # Health Check / Ping
+    path('', lambda r: JsonResponse({'message': 'Russy API is Running', 'status': 'healthy'})),
+    path('ping/', lambda r: JsonResponse({'message': 'pong', 'status': 'healthy'})),
+
     # ── Auth ──────────────────────────────────────
     path('register/', views.register, name='register'),
     path('login/', views.login, name='login'),
