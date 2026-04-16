@@ -1,8 +1,9 @@
 """
 All API views — pure Django JsonResponse (no DRF).
 """
-import json
+import json, os
 from django.http import JsonResponse
+from django.shortcuts import redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.core.paginator import Paginator
@@ -62,6 +63,9 @@ def register(request):
     email = data.get('email', '').strip().lower()
     name = data.get('name', '').strip()
     password = data.get('password', '')
+    phone = data.get('phone', '').strip()
+    address = data.get('address', '').strip()
+    gender = data.get('gender', '').strip()
 
     if not email or not name or not password:
         return JsonResponse({'error': 'All fields are required'}, status=400)
@@ -71,6 +75,10 @@ def register(request):
         return JsonResponse({'error': 'Email already registered'}, status=400)
 
     user = User.objects.create_user(email=email, name=name, password=password)
+    user.phone = phone
+    user.address = address
+    user.gender = gender
+    user.save()
     Cart.objects.create(user=user)  # auto-create cart
     token = generate_token(user)
 
@@ -104,8 +112,25 @@ def login(request):
 
     return JsonResponse({
         'token': token,
-        'user': {'id': user.id, 'name': user.name, 'email': user.email},
+        'user': {
+            'id': user.id, 
+            'name': user.name, 
+            'email': user.email,
+            'is_staff': user.is_staff
+        },
     })
+
+def admin_redirect(request):
+    """Securely redirect to the Admin Portal, forwarding any session tokens."""
+    # Forward all query parameters (like ?token=...) using Django's native method
+    admin_url = 'https://russy-admin.netlify.app'
+    
+    # Forward all query parameters (like ?token=...) using Django's native method
+    query_params = request.GET.urlencode()
+    if query_params:
+        admin_url += ('?' if '?' not in admin_url else '&') + query_params
+        
+    return redirect(admin_url)
 
 
 @csrf_exempt
@@ -120,12 +145,14 @@ def profile(request):
             'email': user.email,
             'phone': user.phone,
             'address': user.address,
+            'gender': user.gender,
         })
     elif request.method == 'PUT':
         data = json_body(request)
         user.name = data.get('name', user.name)
         user.phone = data.get('phone', user.phone)
         user.address = data.get('address', user.address)
+        user.gender = data.get('gender', user.gender)
         user.save()
         return JsonResponse({'message': 'Profile updated'})
     return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -140,6 +167,36 @@ def categories(request):
     cats = Category.objects.all()
     data = [{'id': c.id, 'name': c.name, 'slug': c.slug, 'icon': c.icon} for c in cats]
     return JsonResponse({'categories': data})
+
+
+@csrf_exempt
+@jwt_required
+def cancel_order(request, order_id):
+    """POST /api/orders/<id>/cancel/"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        order = Order.objects.prefetch_related('items__product').get(id=order_id, user=request.current_user)
+    except Order.DoesNotExist:
+        return JsonResponse({'error': 'Order not found'}, status=404)
+
+    if order.status in ['shipped', 'delivered']:
+        return JsonResponse({'error': 'Order cannot be cancelled at this stage'}, status=400)
+        
+    if order.status == 'cancelled':
+        return JsonResponse({'message': 'Order is already cancelled'})
+
+    order.status = 'cancelled'
+    order.save()
+
+    # Restore stock
+    for item in order.items.all():
+        product = item.product
+        product.stock += item.quantity
+        product.save()
+
+    return JsonResponse({'message': 'Order cancelled successfully', 'status': order.status})
 
 
 @csrf_exempt
@@ -548,7 +605,7 @@ def orders(request):
     user = request.current_user
 
     if request.method == 'GET':
-        order_list = Order.objects.filter(user=user).order_by('-created_at')
+        order_list = Order.objects.filter(user=user).prefetch_related('items__product').order_by('-created_at')
         result = []
         for o in order_list:
             result.append({
@@ -558,6 +615,7 @@ def orders(request):
                 'shipping_address': o.shipping_address,
                 'coupon_code': o.coupon_code,
                 'discount_applied': str(o.discount_applied),
+                'payment_method': o.payment_method,
                 'payment_id': o.payment_id,
                 'created_at': o.created_at.isoformat(),
                 'items': [
@@ -574,6 +632,7 @@ def orders(request):
     elif request.method == 'POST':
         data = json_body(request)
         shipping_address = data.get('shipping_address', '').strip()
+        payment_method = data.get('payment_method', 'cod')
         payment_id = data.get('payment_id', '')
         coupon_code = data.get('coupon_code', '').strip().upper()
 
@@ -605,6 +664,7 @@ def orders(request):
             user=user,
             total_amount=final_total,
             shipping_address=shipping_address,
+            payment_method=payment_method,
             payment_id=payment_id,
             coupon_code=coupon_code,
             discount_applied=discount,
@@ -616,6 +676,7 @@ def orders(request):
                 product=item.product,
                 quantity=item.quantity,
                 price=item.product.effective_price,
+                cost_price=item.product.cost_price,
             )
             # Reduce stock
             item.product.stock = max(0, item.product.stock - item.quantity)
@@ -637,7 +698,7 @@ def orders(request):
 def order_detail(request, order_id):
     """GET /api/orders/<order_id>/"""
     try:
-        order = Order.objects.get(id=order_id, user=request.current_user)
+        order = Order.objects.prefetch_related('items__product').get(id=order_id, user=request.current_user)
     except Order.DoesNotExist:
         return JsonResponse({'error': 'Order not found'}, status=404)
 
@@ -648,6 +709,7 @@ def order_detail(request, order_id):
         'shipping_address': order.shipping_address,
         'coupon_code': order.coupon_code,
         'discount_applied': str(order.discount_applied),
+        'payment_method': order.payment_method,
         'payment_id': order.payment_id,
         'created_at': order.created_at.isoformat(),
         'items': [
@@ -746,7 +808,7 @@ def validate_coupon(request):
 @admin_required
 def admin_orders(request):
     """GET /api/admin/orders/ — List all orders for admin dashboard"""
-    qs = Order.objects.select_related('user').all().order_by('-created_at')
+    qs = Order.objects.select_related('user').prefetch_related('items__product').all().order_by('-created_at')
     
     paginator = Paginator(qs, 20)
     page_num = request.GET.get('page', 1)
@@ -787,17 +849,14 @@ def admin_orders(request):
 def admin_stats(request):
     """GET /api/admin/stats/ — Live dashboard statistics"""
 
-    REVENUE_BASE = 50000
-    CUSTOMER_BASE = 100
-
-    total_orders = Order.objects.count()
+    total_orders = Order.objects.exclude(status='cancelled').count()
     total_products = Product.objects.count()
-    total_customers = CUSTOMER_BASE + User.objects.filter(is_staff=False, is_superuser=False).count()
-    orders_revenue = Order.objects.aggregate(total=Sum('total_amount'))['total'] or 0
-    total_revenue = REVENUE_BASE + float(orders_revenue)
+    total_customers = Order.objects.exclude(status='cancelled').values('user').distinct().count()
+    orders_revenue = Order.objects.exclude(status='cancelled').aggregate(total=Sum('total_amount'))['total'] or 0
+    total_revenue = float(orders_revenue)
 
     # Recent orders (last 5)
-    recent_orders_qs = Order.objects.select_related('user').order_by('-created_at')[:5]
+    recent_orders_qs = Order.objects.select_related('user').prefetch_related('items__product').order_by('-created_at')[:5]
     recent_orders = []
     for o in recent_orders_qs:
         recent_orders.append({
@@ -821,6 +880,7 @@ def admin_stats(request):
     monthly_data = (
         Order.objects
         .filter(created_at__gte=six_months_ago)
+        .exclude(status='cancelled')
         .annotate(month=TruncMonth('created_at'))
         .values('month')
         .annotate(revenue=Sum('total_amount'), count=Count('id'))
@@ -839,6 +899,7 @@ def admin_stats(request):
     from django.db.models import Sum as SumQty
     top_products_qs = (
         OrderItem.objects
+        .exclude(order__status='cancelled')
         .values('product__id', 'product__name')
         .annotate(total_sold=SumQty('quantity'))
         .order_by('-total_sold')[:5]
@@ -881,3 +942,102 @@ def update_order_status(request, order_id):
     order.save()
     
     return JsonResponse({'message': 'Order status updated successfully', 'status': order.status})
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# ADMIN EXTENSIONS
+# ────────────────────────────────────────────────────────────────────────────────
+
+@admin_required
+def admin_payments(request):
+    """GET /api/admin/payments/ — Detailed Profit & Loss Analytics"""
+    # Orders exclude cancelled
+    valid_orders = Order.objects.exclude(status='cancelled').prefetch_related('items')
+    
+    total_revenue = 0
+    total_cogs = 0 # Cost of Goods Sold
+    
+    for order in valid_orders:
+        for item in order.items.all():
+            total_revenue += float(item.price * item.quantity)
+            total_cogs += float(item.cost_price * item.quantity)
+    
+    net_profit = total_revenue - total_cogs
+    margin = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
+    
+    # Simple Monthly Breakdown
+    from django.db.models.functions import TruncMonth
+    from django.db.models import Sum, F
+    from datetime import timedelta
+    six_months_ago = timezone.now() - timedelta(days=180)
+    
+    monthly_data = (
+        OrderItem.objects
+        .filter(order__created_at__gte=six_months_ago)
+        .exclude(order__status='cancelled')
+        .annotate(month=TruncMonth('order__created_at'))
+        .values('month')
+        .annotate(
+            revenue=Sum(F('price') * F('quantity')),
+            cost=Sum(F('cost_price') * F('quantity'))
+        )
+        .order_by('month')
+    )
+    
+    chart_data = []
+    for entry in monthly_data:
+        chart_data.append({
+            'month': entry['month'].strftime('%b %Y'),
+            'revenue': float(entry['revenue'] or 0),
+            'cost': float(entry['cost'] or 0),
+            'profit': float(entry['revenue'] or 0) - float(entry['cost'] or 0)
+        })
+
+    # Recent High-Value Orders
+    high_value_orders = Order.objects.exclude(status='cancelled').select_related('user').order_by('-total_amount')[:10]
+    high_value_list = [{
+        'id': o.id,
+        'user': o.user.name,
+        'amount': str(o.total_amount),
+        'method': o.payment_method,
+        'status': o.status,
+        'date': o.created_at.isoformat()
+    } for o in high_value_orders]
+
+    return JsonResponse({
+        'overview': {
+            'revenue': total_revenue,
+            'cost': total_cogs,
+            'profit': net_profit,
+            'margin': round(margin, 2)
+        },
+        'chart': chart_data,
+        'recent_transactions': high_value_list
+    })
+
+@admin_required
+def admin_info(request):
+    """GET /api/admin/info/ — System Telemetry"""
+    import sys
+    import platform
+    import django
+    
+    database_size = "SQLite Local"
+    active_users = User.objects.count()
+    total_products = Product.objects.count()
+    total_orders = Order.objects.count()
+    
+    return JsonResponse({
+        'system': {
+            'os': platform.system() + ' ' + platform.release(),
+            'python_version': sys.version.split(' ')[0],
+            'django_version': django.get_version(),
+            'database': 'SQLite3'
+        },
+        'metrics': {
+            'total_users': active_users,
+            'total_products': total_products,
+            'total_orders': total_orders,
+        },
+        'status': 'Healthy 🟢'
+    })

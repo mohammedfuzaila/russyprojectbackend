@@ -27,9 +27,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     name = models.CharField(max_length=255)
     phone = models.CharField(max_length=15, blank=True)
     address = models.TextField(blank=True)
-    is_active = models.BooleanField(default=True)
+    gender = models.CharField(max_length=15, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
     is_staff = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     objects = UserManager()
     USERNAME_FIELD = 'email'
@@ -61,14 +62,15 @@ class Product(models.Model):
     slug = models.SlugField(unique=True)
     description = models.TextField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     image = models.ImageField(upload_to='products/', blank=True, null=True)
     stock = models.PositiveIntegerField(default=0)
     weight = models.CharField(max_length=50, default='100g')   # e.g. "100g", "250g"
-    is_featured = models.BooleanField(default=False)
+    is_featured = models.BooleanField(default=False, db_index=True)
     rating = models.DecimalField(max_digits=3, decimal_places=1, default=4.5)
     total_reviews = models.PositiveIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return self.name
@@ -112,14 +114,22 @@ class Order(models.Model):
         ('cancelled', 'Cancelled'),
     ]
 
+    PAYMENT_CHOICES = [
+        ('cod', 'Cash on Delivery'),
+        ('upi', 'UPI'),
+        ('debit_card', 'Debit Card'),
+        ('credit_card', 'Credit Card'),
+    ]
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', db_index=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     coupon_code = models.CharField(max_length=50, blank=True)
     discount_applied = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     shipping_address = models.TextField()
-    payment_id = models.CharField(max_length=255, blank=True)  # Razorpay payment ID
-    created_at = models.DateTimeField(auto_now_add=True)
+    payment_method = models.CharField(max_length=50, choices=PAYMENT_CHOICES, default='cod')
+    payment_id = models.CharField(max_length=255, blank=True)  # transaction ID if present
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -131,6 +141,7 @@ class OrderItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)  # snapshot price at order time
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def __str__(self):
         return f"{self.quantity} x {self.product.name} (Order #{self.order.id})"
@@ -141,9 +152,9 @@ class OrderItem(models.Model):
 class Review(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='reviews')
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    rating = models.PositiveIntegerField(default=5)   # 1-5
+    rating = models.PositiveIntegerField(default=5, db_index=True)   # 1-5
     comment = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"Review by {self.user.email} on {self.product.name}"

@@ -24,6 +24,7 @@ urlpatterns = [
     # ── Orders ────────────────────────────────────
     path('orders/', views.orders, name='orders'),
     path('orders/<int:order_id>/', views.order_detail, name='order-detail'),
+    path('orders/<int:order_id>/cancel/', views.cancel_order, name='cancel-order'),
 
     # ── Wishlist ──────────────────────────────────
     path('wishlist/', views.wishlist, name='wishlist'),
@@ -42,4 +43,7 @@ urlpatterns = [
     path('admin/orders/', views.admin_orders, name='admin-orders'),
     path('admin/orders/<int:order_id>/status/', views.update_order_status, name='admin-update-order-status'),
     path('admin/stats/', views.admin_stats, name='admin-stats'),
+    path('admin/payments/', views.admin_payments, name='admin-payments'),
+    path('admin/info/', views.admin_info, name='admin-info'),
+    path('admin-portal/', views.admin_redirect, name='admin-portal-redirect'),
 ]

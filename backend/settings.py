@@ -7,11 +7,11 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'russy-masala-secret-key-change-in-production-xyz123'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'russy-masala-secret-key-change-in-production-xyz123')
 
-DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['russyprojectbackend.onrender.com', 'localhost', '127.0.0.1', '*']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -29,6 +29,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -59,14 +60,15 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'HOST': 'gateway01.ap-southeast-1.prod.aws.tidbcloud.com',
-        'PORT': 4000,
-        'NAME': 'test',
-        'USER': 'K5SLLGkgtMazxbs.root',
-        'PASSWORD': '6gJoe9ccb5dO0ocG',
+        'HOST': os.getenv('DB_HOST', 'gateway01.ap-southeast-1.prod.aws.tidbcloud.com'),
+        'PORT': int(os.getenv('DB_PORT', 4000)),
+        'NAME': os.getenv('DB_NAME', 'test'),
+        'USER': os.getenv('DB_USER', 'K5SLLGkgtMazxbs.root'),
+        'PASSWORD': os.getenv('DB_PASSWORD', '6gJoe9ccb5dO0ocG'),
+        'CONN_MAX_AGE': 600,
         'OPTIONS': {
             'ssl': {
-                'ca': None,           # No CA file required for TiDB Cloud public endpoint
+                'ca': None,
             },
             'ssl_verify_cert': False,
             'ssl_verify_identity': False,
@@ -90,6 +92,8 @@ USE_TZ = True
 
 # Static & Media
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
@@ -97,9 +101,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Cloudinary Storage Settings
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': 'dbwxsfgl2',
-    'API_KEY': '465241887566399',
-    'API_SECRET': '2qKQxbi_azRlVYNrxG2aPLOV-a0'
+    'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME', 'dbwxsfgl2'),
+    'API_KEY': os.getenv('CLOUDINARY_API_KEY', '465241887566399'),
+    'API_SECRET': os.getenv('CLOUDINARY_API_SECRET', '2qKQxbi_azRlVYNrxG2aPLOV-a0')
 }
 
 STORAGES = {
@@ -107,7 +111,7 @@ STORAGES = {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
 
